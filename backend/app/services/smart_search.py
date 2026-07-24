@@ -200,7 +200,8 @@ async def search_mapbox_searchbox(query: str, lat: float = None, lon: float = No
         return []
 
     encoded_q = urllib.parse.quote(query)
-    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{encoded_q}.json?limit=5&access_token={mapbox_token}"
+    # Strictly limit Mapbox geocoding to India (country=IN)
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{encoded_q}.json?country=IN&limit=7&access_token={mapbox_token}"
     if lat is not None and lon is not None:
         url += f"&proximity={lon},{lat}"
 
@@ -212,15 +213,19 @@ async def search_mapbox_searchbox(query: str, lat: float = None, lon: float = No
                 results = []
                 for feat in data.get("features", []):
                     center = feat.get("center", [0, 0])
-                    results.append({
-                        "name": feat.get("text") or feat.get("place_name", "").split(",")[0],
-                        "lat": center[1],
-                        "lon": center[0],
-                        "address": feat.get("place_name", ""),
-                        "category": feat.get("properties", {}).get("category", "place"),
-                        "place_id": feat.get("id", ""),
-                        "source": "mapbox"
-                    })
+                    place_name = feat.get("place_name", "")
+                    
+                    # Verify India locality
+                    if "india" in place_name.lower():
+                        results.append({
+                            "name": feat.get("text") or place_name.split(",")[0],
+                            "lat": center[1],
+                            "lon": center[0],
+                            "address": place_name,
+                            "category": feat.get("properties", {}).get("category", feat.get("place_type", ["place"])[0]),
+                            "place_id": feat.get("id", ""),
+                            "source": "mapbox"
+                        })
                 return results
     except Exception as e:
         print(f"Mapbox place search error: {e}")
@@ -230,7 +235,14 @@ async def search_mapbox_searchbox(query: str, lat: float = None, lon: float = No
 async def search_nominatim(query: str, lat: float = None, lon: float = None) -> list:
     async def _call():
         async with httpx.AsyncClient(timeout=5.0) as client:
-            params = {"q": query, "format": "jsonv2", "limit": 5, "addressdetails": 1}
+            # Strictly limit Nominatim to India (countrycodes=in)
+            params = {
+                "q": query,
+                "countrycodes": "in",
+                "format": "jsonv2",
+                "limit": 7,
+                "addressdetails": 1
+            }
             if lat is not None and lon is not None:
                 params["viewbox"] = f"{lon-0.5},{lat+0.5},{lon+0.5},{lat-0.5}"
                 params["bounded"] = 0
@@ -243,16 +255,19 @@ async def search_nominatim(query: str, lat: float = None, lon: float = None) -> 
                 results = []
                 for item in resp.json():
                     display_name = item.get("display_name", "")
-                    short_name = item.get("name") or (display_name.split(",")[0] if display_name else query)
-                    results.append({
-                        "name": short_name,
-                        "lat": float(item.get("lat", 0)),
-                        "lon": float(item.get("lon", 0)),
-                        "address": display_name,
-                        "category": item.get("type", "landmark"),
-                        "place_id": str(item.get("place_id", "")),
-                        "source": "nominatim"
-                    })
+                    country_code = item.get("address", {}).get("country_code", "")
+                    if country_code == "in" or "india" in display_name.lower():
+                        short_name = item.get("name") or (display_name.split(",")[0] if display_name else query)
+                        cat = item.get("type") or item.get("category") or "landmark"
+                        results.append({
+                            "name": short_name,
+                            "lat": float(item.get("lat", 0)),
+                            "lon": float(item.get("lon", 0)),
+                            "address": display_name,
+                            "category": cat.replace("_", " ").title(),
+                            "place_id": str(item.get("place_id", "")),
+                            "source": "nominatim"
+                        })
                 return results
             return []
     try:
@@ -265,6 +280,10 @@ async def search_nominatim(query: str, lat: float = None, lon: float = None) -> 
 async def search_overpass(query: str, lat: float = None, lon: float = None) -> list:
     if lat is None or lon is None:
         return []
+    
+    # Ensure coordinates are within India bounding box
+    if not (6.0 <= lat <= 37.5 and 68.0 <= lon <= 97.5):
+        return []
 
     overpass_url = "https://overpass-api.de/api/interpreter"
     query_clean = query.replace('"', '').strip()
@@ -273,8 +292,10 @@ async def search_overpass(query: str, lat: float = None, lon: float = None) -> l
     (
       node["name"~"{query_clean}",i](around:25000,{lat},{lon});
       way["name"~"{query_clean}",i](around:25000,{lat},{lon});
+      node["shop"~"{query_clean}",i](around:25000,{lat},{lon});
+      node["amenity"~"{query_clean}",i](around:25000,{lat},{lon});
     );
-    out center 5;
+    out center 7;
     """
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -287,13 +308,14 @@ async def search_overpass(query: str, lat: float = None, lon: float = None) -> l
                     name = tags.get("name") or query
                     e_lat = elem.get("lat") or elem.get("center", {}).get("lat")
                     e_lon = elem.get("lon") or elem.get("center", {}).get("lon")
-                    if e_lat and e_lon:
+                    if e_lat and e_lon and (6.0 <= float(e_lat) <= 37.5 and 68.0 <= float(e_lon) <= 97.5):
+                        cat = tags.get("shop") or tags.get("amenity") or tags.get("tourism") or "store"
                         results.append({
                             "name": name,
                             "lat": float(e_lat),
                             "lon": float(e_lon),
-                            "address": f"{name}, {tags.get('addr:city', tags.get('addr:street', 'Local Area'))}",
-                            "category": tags.get("amenity") or tags.get("shop") or tags.get("tourism") or "poi",
+                            "address": f"{name}, {tags.get('addr:street', tags.get('addr:suburb', 'Local Area'))}, India",
+                            "category": cat.replace("_", " ").title(),
                             "place_id": f"osm_{elem.get('id')}",
                             "source": "overpass"
                         })
