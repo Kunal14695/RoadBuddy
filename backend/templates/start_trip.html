@@ -8,6 +8,7 @@
 <!-- Mapbox GL JS v3 -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+<script src="/static/js/navigation-reroute.js"></script>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap');
@@ -5472,6 +5473,11 @@ async function loadPartnerFuelStationsOnMap() {
         map.flyTo({ center: [gpsCoords.lon, gpsCoords.lat], zoom: 16 });
       }
       
+      // Auto-Reroute deviation check during active driving navigation
+      if (isNavigating && !isTransit && window.RoadBuddyNav && window.RoadBuddyNav.checkForReroute) {
+        window.RoadBuddyNav.checkForReroute(newCoords.lat, newCoords.lon, pos.coords.accuracy);
+      }
+
       // Dynamic live route updates from current position to destination
       if (!isTransit) {
         const destInput = document.getElementById('destination-input');
@@ -5510,6 +5516,20 @@ async function loadPartnerFuelStationsOnMap() {
 
     }, (err) => console.warn(err), { enableHighAccuracy: true });
   }
+
+  // Global window hook for RoadBuddyNav auto-rerouter
+  window.fetchRerouteFromPosition = async function(userLat, userLon) {
+    const destInput = document.getElementById('destination-input');
+    if (!destInput) return false;
+    const destLat = destInput.dataset.lat ? parseFloat(destInput.dataset.lat) : null;
+    const destLon = destInput.dataset.lon ? parseFloat(destInput.dataset.lon) : null;
+    if (!destLat || !destLon) return false;
+
+    const destName = destInput.value.trim() || 'Destination';
+    lastRouteUpdateCoords = { lat: userLat, lon: userLon };
+    await drawCarRoute({ lat: userLat, lon: userLon }, { lat: destLat, lon: destLon }, destName, true);
+    return true;
+  };
 
   function stopNavigation() {
     isNavigating = false;

@@ -1005,7 +1005,7 @@ function initDashboardMap() {
     }
     debounceTimer = setTimeout(() => {
       fetchSuggestions(query, 'general', 0);
-    }, 300);
+    }, 400);
   });
 
   searchInput.addEventListener('keypress', (e) => {
@@ -1266,8 +1266,11 @@ function locateWaypointGPS(idx) {
 }
 
 async function fetchSuggestions(query, type, idx) {
-  const token = mapboxgl.accessToken;
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${token}&country=IN&limit=5`;
+  let proximityParams = '';
+  if (typeof userLat !== 'undefined' && typeof userLon !== 'undefined' && userLat && userLon) {
+    proximityParams = `&lat=${userLat}&lon=${userLon}`;
+  }
+  const url = `/api/search/places?q=${encodeURIComponent(query)}${proximityParams}`;
   
   try {
     const res = await fetch(url);
@@ -1282,12 +1285,16 @@ async function fetchSuggestions(query, type, idx) {
     
     if (!suggBox) return;
     
-    if (data.features && data.features.length > 0) {
-      suggBox.innerHTML = data.features.map(f => {
-        const safeName = f.place_name.replace(/'/g, "\\'");
+    const results = data.results || [];
+    if (results.length > 0) {
+      suggBox.innerHTML = results.map(f => {
+        const displayName = f.name || f.address;
+        const safeName = displayName.replace(/'/g, "\\'");
+        const icon = f.source === 'nominatim' ? '📍' : (f.source === 'overpass' ? '🏪' : '🗺️');
+        const subAddress = f.address && f.address !== f.name ? f.address : '';
         return `
-          <div onclick="selectSuggClick(${f.center[0]}, ${f.center[1]}, '${safeName}', '${type}', ${idx})" style="padding: 8px 12px; cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" onmouseover="this.style.background='rgba(16,185,129,0.15)';" onmouseout="this.style.background='none';">
-            ${f.place_name}
+          <div onclick="selectSuggClick(${f.lon}, ${f.lat}, '${safeName}', '${type}', ${idx})" style="padding: 8px 12px; cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" onmouseover="this.style.background='rgba(16,185,129,0.15)';" onmouseout="this.style.background='none';">
+            <span style="font-size: 10px; margin-right: 4px;">${icon}</span> <strong>${f.name}</strong> ${subAddress ? `<span style="font-size: 10px; color: #94a3b8;">— ${subAddress}</span>` : ''}
           </div>
         `;
       }).join('');
@@ -1296,7 +1303,7 @@ async function fetchSuggestions(query, type, idx) {
       suggBox.style.display = 'none';
     }
   } catch (err) {
-    console.error(err);
+    console.error("Global place search error:", err);
   }
 }
 

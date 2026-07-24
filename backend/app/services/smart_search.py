@@ -12,6 +12,7 @@ Examples:
 """
 
 import json
+import asyncio
 import httpx
 from app.core.config import settings
 
@@ -156,3 +157,207 @@ async def smart_search(query: str) -> dict:
 
     except Exception as e:
         raise RuntimeError(f"Smart search failed: {e}")
+
+
+# ── Global Place Search Engine (Mapbox -> Nominatim -> Overpass Fallback) ──────
+
+import time
+import urllib.parse
+
+NOMINATIM_HEADERS = {"User-Agent": "RoadBuddy/1.0 (contact: kunalsinghtanwar355@gmail.com)"}
+
+_last_nominatim_call = 0.0
+_nominatim_lock = asyncio.Lock()
+
+_search_cache: dict[str, tuple[float, list]] = {}
+CACHE_TTL_SECONDS = 86400  # 24 hours
+
+
+def get_cached_search(key: str):
+    entry = _search_cache.get(key)
+    if entry and (time.time() - entry[0]) < CACHE_TTL_SECONDS:
+        return entry[1]
+    return None
+
+
+def set_cached_search(key: str, value: list):
+    _search_cache[key] = (time.time(), value)
+
+
+async def throttled_nominatim_call(func, *args, **kwargs):
+    global _last_nominatim_call
+    async with _nominatim_lock:
+        elapsed = time.time() - _last_nominatim_call
+        if elapsed < 1.1:
+            await asyncio.sleep(1.1 - elapsed)
+        _last_nominatim_call = time.time()
+        return await func(*args, **kwargs)
+
+
+async def search_mapbox_searchbox(query: str, lat: float = None, lon: float = None) -> list:
+    mapbox_token = settings.mapbox_access_token.strip()
+    if not mapbox_token:
+        return []
+
+    encoded_q = urllib.parse.quote(query)
+    # Strictly limit Mapbox geocoding to India (country=IN)
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{encoded_q}.json?country=IN&limit=7&access_token={mapbox_token}"
+    if lat is not None and lon is not None:
+        url += f"&proximity={lon},{lat}"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                data = res.json()
+                results = []
+                for feat in data.get("features", []):
+                    center = feat.get("center", [0, 0])
+                    place_name = feat.get("place_name", "")
+                    
+                    # Verify India locality
+                    if "india" in place_name.lower():
+                        results.append({
+                            "name": feat.get("text") or place_name.split(",")[0],
+                            "lat": center[1],
+                            "lon": center[0],
+                            "address": place_name,
+                            "category": feat.get("properties", {}).get("category", feat.get("place_type", ["place"])[0]),
+                            "place_id": feat.get("id", ""),
+                            "source": "mapbox"
+                        })
+                return results
+    except Exception as e:
+        print(f"Mapbox place search error: {e}")
+    return []
+
+
+async def search_nominatim(query: str, lat: float = None, lon: float = None) -> list:
+    async def _call():
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Strictly limit Nominatim to India (countrycodes=in)
+            params = {
+                "q": query,
+                "countrycodes": "in",
+                "format": "jsonv2",
+                "limit": 7,
+                "addressdetails": 1
+            }
+            if lat is not None and lon is not None:
+                params["viewbox"] = f"{lon-0.5},{lat+0.5},{lon+0.5},{lat-0.5}"
+                params["bounded"] = 0
+            resp = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params=params,
+                headers=NOMINATIM_HEADERS
+            )
+            if resp.status_code == 200:
+                results = []
+                for item in resp.json():
+                    display_name = item.get("display_name", "")
+                    country_code = item.get("address", {}).get("country_code", "")
+                    if country_code == "in" or "india" in display_name.lower():
+                        short_name = item.get("name") or (display_name.split(",")[0] if display_name else query)
+                        cat = item.get("type") or item.get("category") or "landmark"
+                        results.append({
+                            "name": short_name,
+                            "lat": float(item.get("lat", 0)),
+                            "lon": float(item.get("lon", 0)),
+                            "address": display_name,
+                            "category": cat.replace("_", " ").title(),
+                            "place_id": str(item.get("place_id", "")),
+                            "source": "nominatim"
+                        })
+                return results
+            return []
+    try:
+        return await throttled_nominatim_call(_call)
+    except Exception as e:
+        print(f"Nominatim place search error: {e}")
+        return []
+
+
+async def search_overpass(query: str, lat: float = None, lon: float = None) -> list:
+    if lat is None or lon is None:
+        return []
+    
+    # Ensure coordinates are within India bounding box
+    if not (6.0 <= lat <= 37.5 and 68.0 <= lon <= 97.5):
+        return []
+
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    query_clean = query.replace('"', '').strip()
+    overpass_query = f"""
+    [out:json][timeout:5];
+    (
+      node["name"~"{query_clean}",i](around:25000,{lat},{lon});
+      way["name"~"{query_clean}",i](around:25000,{lat},{lon});
+      node["shop"~"{query_clean}",i](around:25000,{lat},{lon});
+      node["amenity"~"{query_clean}",i](around:25000,{lat},{lon});
+    );
+    out center 7;
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(overpass_url, data={"data": overpass_query})
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                for elem in data.get("elements", []):
+                    tags = elem.get("tags", {})
+                    name = tags.get("name") or query
+                    e_lat = elem.get("lat") or elem.get("center", {}).get("lat")
+                    e_lon = elem.get("lon") or elem.get("center", {}).get("lon")
+                    if e_lat and e_lon and (6.0 <= float(e_lat) <= 37.5 and 68.0 <= float(e_lon) <= 97.5):
+                        cat = tags.get("shop") or tags.get("amenity") or tags.get("tourism") or "store"
+                        results.append({
+                            "name": name,
+                            "lat": float(e_lat),
+                            "lon": float(e_lon),
+                            "address": f"{name}, {tags.get('addr:street', tags.get('addr:suburb', 'Local Area'))}, India",
+                            "category": cat.replace("_", " ").title(),
+                            "place_id": f"osm_{elem.get('id')}",
+                            "source": "overpass"
+                        })
+                return results
+    except Exception as e:
+        print(f"Overpass search error: {e}")
+    return []
+
+
+async def unified_place_search(query: str, lat: float = None, lon: float = None, limit: int = 10) -> list:
+    if not query or len(query.strip()) < 3:
+        return []
+
+    cache_key = f"{query.lower().strip()}:{round(lat, 2) if lat is not None else 0}:{round(lon, 2) if lon is not None else 0}"
+    cached = get_cached_search(cache_key)
+    if cached is not None:
+        return cached
+
+    # 1. Mapbox Search Box / Places API
+    results = await search_mapbox_searchbox(query, lat, lon)
+    if len(results) >= 3:
+        set_cached_search(cache_key, results[:limit])
+        return results[:limit]
+
+    # 2. Nominatim OpenStreetMap Search
+    nominatim_results = await search_nominatim(query, lat, lon)
+    existing_names = {r["name"].lower() for r in results}
+    for n_res in nominatim_results:
+        if n_res["name"].lower() not in existing_names:
+            results.append(n_res)
+            existing_names.add(n_res["name"].lower())
+
+    if len(results) >= 3:
+        set_cached_search(cache_key, results[:limit])
+        return results[:limit]
+
+    # 3. Overpass API Fallback
+    overpass_results = await search_overpass(query, lat, lon)
+    for o_res in overpass_results:
+        if o_res["name"].lower() not in existing_names:
+            results.append(o_res)
+            existing_names.add(o_res["name"].lower())
+
+    set_cached_search(cache_key, results[:limit])
+    return results[:limit]
