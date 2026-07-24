@@ -8,7 +8,7 @@ from app.provider.pages import router as provider_pages_router
 from app.provider.food_pages import router as food_provider_pages_router
 from app.routers import booking, payment
 
-from app.routers import trips, fuel, users, community, journal, transport, food, auth, stations
+from app.routers import trips, fuel, users, community, journal, transport, food, auth, stations, search
 from app.routers import fuel_operator_pages
 from app.pages import auth_pages, dashboard_pages
 from app.core.database import engine
@@ -199,6 +199,7 @@ app.include_router(booking.router, prefix="/api/booking", tags=["Booking"])
 app.include_router(payment.router, prefix="/api/payment", tags=["Payment Gateway"])
 app.include_router(food.router, prefix="/api/food", tags=["Food & Restaurant"])
 app.include_router(stations.router, prefix="/api/stations", tags=["Fuel Station Availability"])
+app.include_router(search.router)
 app.include_router(stations.debug_router, prefix="/api", tags=["Debug (DEMO only)"])
 app.include_router(fuel_operator_pages.router)   # /fuel-operator/* pages
 
