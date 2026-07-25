@@ -196,3 +196,84 @@ def build_fuel_calc_response(
         "fuel_price_per_litre": fuel["price_per_unit"],
         "city": origin,
     }
+
+
+# ── Vehicle Fuel Range & Gap Warnings ─────────────────────────────────────────
+
+def calculate_vehicle_range_km(vehicle) -> float:
+    """
+    Estimate how far the vehicle can travel on a full tank/charge,
+    using mileage_kmpl and assumed fuel tank / battery capacity.
+    """
+    fuel_type = getattr(vehicle, "fuel_type", None) or (vehicle.get("fuel_type") if isinstance(vehicle, dict) else "petrol")
+    fuel_type = (fuel_type or "petrol").lower().strip()
+
+    if fuel_type in ["electric", "ev"]:
+        est_range = getattr(vehicle, "estimated_range_km", None) or (vehicle.get("estimated_range_km") if isinstance(vehicle, dict) else None)
+        return float(est_range or 250.0)
+
+    mileage = getattr(vehicle, "mileage_kmpl", None) or (vehicle.get("mileage_kmpl") if isinstance(vehicle, dict) else None)
+    mileage = float(mileage or 15.0)
+
+    category = getattr(vehicle, "category", None) or (vehicle.get("category") if isinstance(vehicle, dict) else "car")
+    category = (category or "car").lower().strip()
+
+    assumed_tank_liters = 15.0 if category == "two_wheeler" else 40.0
+    return round(mileage * assumed_tank_liters, 1)
+
+
+def find_fuel_gap_warnings(
+    distance_km: float,
+    fuel_stations: list,
+    vehicle_range_km: float,
+    is_ev: bool = False
+) -> list:
+    """
+    Flags any gap along the route that exceeds a safety-margin percentage (70%)
+    of the vehicle's estimated maximum range.
+    """
+    SAFETY_MARGIN = 0.70
+    safe_gap_km = vehicle_range_km * SAFETY_MARGIN
+    station_label = "EV charging station" if is_ev else "fuel station"
+
+    warnings = []
+
+    if not fuel_stations:
+        if distance_km > safe_gap_km:
+            warnings.append({
+                "gap_distance_km": round(distance_km, 1),
+                "message": f"No verified {station_label} found on this {round(distance_km)} km stretch - ensure a full {'charge' if is_ev else 'tank'} before departure."
+            })
+        return warnings
+
+    # Sort stations by distance along route if provided
+    checkpoints = sorted(
+        fuel_stations,
+        key=lambda s: s.get("distance_along_route_km", 0.0) if isinstance(s, dict) else getattr(s, "distance_along_route_km", 0.0)
+    )
+
+    prev_distance = 0.0
+    for station in checkpoints:
+        dist_along = station.get("distance_along_route_km", 0.0) if isinstance(station, dict) else getattr(station, "distance_along_route_km", 0.0)
+        gap = dist_along - prev_distance
+        if gap > safe_gap_km:
+            warnings.append({
+                "gap_start_km": round(prev_distance, 1),
+                "gap_end_km": round(dist_along, 1),
+                "gap_distance_km": round(gap, 1),
+                "message": f"No {station_label} for {round(gap)} km - refuel before this stretch."
+            })
+        prev_distance = dist_along
+
+    # Final gap check from last station to destination
+    final_gap = distance_km - prev_distance
+    if final_gap > safe_gap_km:
+        warnings.append({
+            "gap_start_km": round(prev_distance, 1),
+            "gap_end_km": round(distance_km, 1),
+            "gap_distance_km": round(final_gap, 1),
+            "message": f"Final {round(final_gap)} km stretch has no verified {station_label}s - ensure sufficient range."
+        })
+
+    return warnings
+

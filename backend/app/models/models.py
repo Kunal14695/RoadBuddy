@@ -16,8 +16,27 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     created_at    = Column(DateTime, server_default=func.now())
 
-    vehicles = relationship("Vehicle", back_populates="owner")
-    trips    = relationship("Trip",    back_populates="user")
+    vehicles   = relationship("Vehicle", back_populates="owner")
+    trips      = relationship("Trip",    back_populates="user")
+    preference = relationship("UserPreference", back_populates="user", uselist=False)
+
+
+# ── User Preferences ──────────────────────────────────────────────────────────
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    id                      = Column(Integer, primary_key=True, index=True)
+    user_id                 = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    preferred_budget_tier   = Column(String, nullable=True)     # "budget" / "mid" / "luxury"
+    avoid_tolls_default     = Column(Boolean, default=False)
+    avoid_highways_default  = Column(Boolean, default=False)
+    preferred_accommodation = Column(String, nullable=True)     # "hotel" / "homestay" / "budget-stay"
+    preferred_travel_mode   = Column(String, nullable=True)     # "own_vehicle" / "cab_service" / "bus" / "train" / "flight"
+    last_computed_at        = Column(DateTime, server_default=func.now())
+
+    user = relationship("User", back_populates="preference")
+
 
 
 # ── Vehicles ──────────────────────────────────────────────────────────────────

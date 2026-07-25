@@ -130,6 +130,40 @@ def get_profile(
     )
 
 
+@router.get("/preferences")
+def get_preferences(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get or compute travel preference snapshot for logged-in user."""
+    from app.models.models import UserPreference
+    from app.services.preference_engine import compute_user_preferences
+
+    user_id = int(current_user["user_id"])
+    pref = db.query(UserPreference).filter(UserPreference.user_id == user_id).first()
+    if not pref:
+        pref = compute_user_preferences(db, user_id)
+
+    if not pref:
+        return {
+            "has_preferences": False,
+            "preferred_budget_tier": None,
+            "preferred_travel_mode": None,
+            "avoid_tolls_default": False,
+            "avoid_highways_default": False,
+        }
+
+    return {
+        "has_preferences": True,
+        "preferred_budget_tier": pref.preferred_budget_tier,
+        "preferred_travel_mode": pref.preferred_travel_mode,
+        "avoid_tolls_default": pref.avoid_tolls_default,
+        "avoid_highways_default": pref.avoid_highways_default,
+        "preferred_accommodation": pref.preferred_accommodation,
+        "last_computed_at": pref.last_computed_at.isoformat() if pref.last_computed_at else None,
+    }
+
+
 
 
 @router.patch("/me", response_model=UserOut)

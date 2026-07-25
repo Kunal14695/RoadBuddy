@@ -58,11 +58,34 @@
       <!-- Glow effect -->
       <div class="absolute -top-24 -left-24 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
       
-      <div class="flex items-center gap-2.5 border-b border-white/10 pb-4 relative z-10">
-        <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded font-mono font-black tracking-wider uppercase">AI Plan</span>
-        <h3 class="font-extrabold text-white text-lg tracking-tight">Journey Parameters</h3>
+      <!-- Proactive Trip Preference Suggestion Banner -->
+      <div id="preference-banner" class="hidden relative z-10 p-4 bg-indigo-950/60 border border-indigo-500/30 rounded-xl text-left space-y-2 backdrop-blur-md">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-indigo-300 font-bold text-xs">
+            <span class="material-symbols-outlined text-sm">psychology</span>
+            <span>Based on your past trips: <span id="pref-summary-text" class="text-white font-extrabold"></span></span>
+          </div>
+          <button type="button" id="dismiss-pref-btn" class="text-xs text-indigo-400 hover:text-white font-bold">&times; Dismiss</button>
+        </div>
+        <div class="flex items-center gap-3 pt-1">
+          <button type="button" id="apply-pref-btn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-all shadow">
+            Use These Defaults
+          </button>
+          <button type="button" id="start-fresh-btn" class="text-[11px] text-slate-400 hover:text-white font-medium">
+            Start Fresh
+          </button>
+        </div>
       </div>
-      
+
+      <!-- Fuel/Charging Station Gap Warning Banner -->
+      <div id="fuel-range-warning" class="hidden relative z-10 p-4 bg-amber-950/70 border border-amber-500/40 rounded-xl text-left space-y-1 text-amber-200 text-xs backdrop-blur-md">
+        <div class="flex items-center gap-2 font-bold text-amber-400">
+          <span class="material-symbols-outlined text-sm">warning</span>
+          <span id="fuel-warning-title">Vehicle Range Alert</span>
+        </div>
+        <div id="fuel-warning-body" class="leading-relaxed text-amber-100"></div>
+      </div>
+
       <form id="trip-form" class="space-y-6 relative z-10">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -219,6 +242,93 @@
   });
 
   toggleVehicleRow();
+
+  // Proactive User Preference Suggestion Banner
+  let fetchedPreferences = null;
+
+  async function loadUserPreferences() {
+    try {
+      const res = await fetch("/api/users/preferences");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.has_preferences) {
+        fetchedPreferences = data;
+        const banner = document.getElementById("preference-banner");
+        const summaryEl = document.getElementById("pref-summary-text");
+        if (banner && summaryEl) {
+          const budget = (data.preferred_budget_tier || 'mid').toUpperCase();
+          const mode = (data.preferred_travel_mode || 'own_vehicle').replace('_', ' ').toUpperCase();
+          summaryEl.textContent = `${budget} budget, ${mode} travel`;
+          banner.classList.remove("hidden");
+        }
+      }
+    } catch (e) {
+      console.warn("Preferences load error:", e);
+    }
+  }
+
+  document.getElementById("apply-pref-btn")?.addEventListener("click", () => {
+    if (!fetchedPreferences) return;
+    if (fetchedPreferences.preferred_budget_tier) {
+      const budgetInput = document.getElementById("budget_inr");
+      if (budgetInput) {
+        if (fetchedPreferences.preferred_budget_tier === "budget") budgetInput.value = 4500;
+        else if (fetchedPreferences.preferred_budget_tier === "mid") budgetInput.value = 15000;
+        else if (fetchedPreferences.preferred_budget_tier === "luxury") budgetInput.value = 35000;
+      }
+    }
+    if (fetchedPreferences.preferred_travel_mode) {
+      const targetBtn = document.querySelector(`.travel-mode-btn[data-value="${fetchedPreferences.preferred_travel_mode}"]`);
+      if (targetBtn) targetBtn.click();
+    }
+    document.getElementById("preference-banner")?.classList.add("hidden");
+  });
+
+  document.getElementById("dismiss-pref-btn")?.addEventListener("click", () => {
+    document.getElementById("preference-banner")?.classList.add("hidden");
+  });
+  document.getElementById("start-fresh-btn")?.addEventListener("click", () => {
+    document.getElementById("preference-banner")?.classList.add("hidden");
+  });
+
+  // Vehicle Fuel/EV Range Gap Warning
+  async function checkVehicleRangeWarning() {
+    const vehicleSelect = document.getElementById("vehicle_id");
+    const warningBox = document.getElementById("fuel-range-warning");
+    const warningBody = document.getElementById("fuel-warning-body");
+    const originVal = document.getElementById("origin")?.value || "Jaipur";
+    const destVal = document.getElementById("destination")?.value || "Delhi";
+
+    if (!vehicleSelect || !vehicleSelect.value || !warningBox) return;
+
+    try {
+      const res = await fetch("/api/fuel/range-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vehicle_id: parseInt(vehicleSelect.value),
+          origin: originVal,
+          destination: destVal
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.warnings && data.warnings.length > 0) {
+          warningBody.innerHTML = data.warnings.map(w => `<p>${w.message}</p>`).join("");
+          warningBox.classList.remove("hidden");
+        } else {
+          warningBox.classList.add("hidden");
+        }
+      }
+    } catch (e) {
+      console.warn("Range check error:", e);
+    }
+  }
+
+  document.getElementById("vehicle_id")?.addEventListener("change", checkVehicleRangeWarning);
+  document.getElementById("destination")?.addEventListener("blur", checkVehicleRangeWarning);
+
+  loadUserPreferences();
 
   const originInput = document.getElementById("origin");
   const destInput = document.getElementById("destination");

@@ -90,3 +90,57 @@ def get_toll_estimate(
         "estimated_toll_inr": toll,
         "vehicle_category": vehicle_category,
     }
+
+
+from pydantic import BaseModel
+from typing import Optional
+
+class FuelRangeCheckRequest(BaseModel):
+    vehicle_id: int
+    origin: Optional[str] = "Jaipur"
+    destination: Optional[str] = "Delhi"
+    distance_km: Optional[float] = None
+
+
+@router.post("/range-check")
+def check_fuel_range(
+    data: FuelRangeCheckRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Evaluates vehicle maximum range and detects long gaps between fuel/charging stations.
+    """
+    user_id = int(current_user["user_id"])
+    vehicle = db.query(Vehicle).filter(
+        Vehicle.id == data.vehicle_id,
+        Vehicle.user_id == user_id
+    ).first()
+
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    from app.services.fuel_calculator import calculate_vehicle_range_km, find_fuel_gap_warnings, estimate_distance
+
+    vehicle_range = calculate_vehicle_range_km(vehicle)
+    dist_km = data.distance_km or estimate_distance(data.origin or "Jaipur", data.destination or "Delhi")
+    is_ev = (vehicle.fuel_type or "").lower().strip() in ["electric", "ev"]
+
+    fuel_stations = []
+    
+    warnings = find_fuel_gap_warnings(
+        distance_km=dist_km,
+        fuel_stations=fuel_stations,
+        vehicle_range_km=vehicle_range,
+        is_ev=is_ev
+    )
+
+    return {
+        "vehicle_id": vehicle.id,
+        "vehicle_name": vehicle.name,
+        "fuel_type": vehicle.fuel_type,
+        "vehicle_range_km": vehicle_range,
+        "distance_km": dist_km,
+        "is_ev": is_ev,
+        "warnings": warnings,
+    }
