@@ -5398,6 +5398,24 @@ async function loadPartnerFuelStationsOnMap() {
     document.getElementById('nav-hud').classList.add('visible');
     document.getElementById('compass-widget').classList.add('visible');
 
+    // Run fuel range warning check on navigation start
+    if (window.RoadBuddyNav && typeof window.RoadBuddyNav.showRerouteToast === 'function') {
+      const originInput = document.getElementById('origin-manual');
+      const destInput = document.getElementById('destination-input');
+      const originName = originInput ? originInput.value : "Origin";
+      const destName = destInput ? destInput.value : "Destination";
+      
+      fetch("/api/fuel/range-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vehicle_id: 1, origin: originName, destination: destName })
+      }).then(r => r.ok ? r.json() : null).then(data => {
+        if (data && data.warnings && data.warnings.length > 0) {
+          window.RoadBuddyNav.showRerouteToast(`⚠️ Range Alert: ${data.warnings[0].message}`, true);
+        }
+      }).catch(() => {});
+    }
+
     const isTransit = ['bus', 'train', 'flight'].includes(currentMode);
     if (isTransit && selectedTransitOptionId) {
       const opt = loadedTransitOptions.find(o => o.id === selectedTransitOptionId);

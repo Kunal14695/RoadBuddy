@@ -776,10 +776,15 @@ def end_trip(
     
     trip.total_cost_inr = trip.fuel_cost_inr + trip.toll_cost_inr + trip.hotel_cost_inr + trip.transport_fare_inr + trip.food_cost_inr
 
-    # Save to journal
-    journal.total_expense_inr = trip.total_cost_inr
-
     db.commit()
+
+    # Recompute user travel preferences snapshot
+    try:
+        from app.services.preference_engine import compute_user_preferences
+        compute_user_preferences(db, user_id)
+    except Exception as pref_err:
+        print(f"Failed to recompute preferences for user {user_id}: {pref_err}")
+
     return {"success": True, "message": "Trip and all associated bookings marked as completed."}
 
 
