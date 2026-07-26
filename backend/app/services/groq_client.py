@@ -8,7 +8,7 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
 
 
-async def call_groq_native(messages: list[dict], temperature: float = 0.7, max_tokens: int = 3000) -> str:
+async def call_groq_native(messages: list[dict], temperature: float = 0.7, max_tokens: int = 3000, json_mode: bool = False) -> str:
     """
     Directly calls the Groq completions API using the configured Groq API Key and Llama model.
     """
@@ -25,8 +25,9 @@ async def call_groq_native(messages: list[dict], temperature: float = 0.7, max_t
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
 
     last_exc = None
@@ -115,7 +116,7 @@ async def call_groq(prompt: str, system_prompt: str = None, temperature: float =
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
-            content = await call_groq_native(messages, temperature, max_tokens)
+            content = await call_groq_native(messages, temperature, max_tokens, json_mode=True)
         except Exception as e:
             print(f"Groq JSON call failed ({e}). Falling back to Gemini.")
             content = ""
