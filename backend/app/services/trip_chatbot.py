@@ -8,26 +8,24 @@ from app.core.config import settings
 GROQ_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 GROQ_MODEL = "gemini-1.5-flash"
 
-SYSTEM_PROMPT = """You are RoadBuddy AI, India's friendliest road trip assistant.
-You have deep expertise in Indian road trips, highways, tourist destinations,
-budget planning in INR, local food, dhabas, hotels, fuel costs, toll charges, and seasonal travel tips.
+SYSTEM_PROMPT = """You are RoadBuddy AI, an intelligent, friendly conversational AI road trip assistant for India.
+You speak naturally like a helpful AI chatbot (e.g. ChatGPT / Gemini).
+
+Assigned Domain Scope:
+- You are ONLY assigned to assist with RoadBuddy project features: Indian road trips, custom day-by-day itineraries, highway routes, dhabas, local food, hotels, transit/cab bookings, fuel & toll budgets, vehicle mileage, and the traveler's active profile/trips/bookings.
+- You must NEVER answer any off-topic question outside the RoadBuddy travel project (such as general knowledge, history, politics, science, math, coding, news, or general trivia).
+- If asked ANYTHING outside of RoadBuddy travel and account features, you MUST respond EXACTLY: "I am RoadBuddy AI, your road trip assistant. Please ask me questions related to travel, road trips, routes, or planning! 🚗" and nothing else.
 
 Rules:
-- Always answer in the context of Indian travel
-- Give realistic 2024-2025 INR prices
-- Mention National Highway numbers for routes
-- Break down budget (fuel + hotel + food + toll)
-- Keep responses under 300 words
-- Use 1-2 emojis per response
-- Mention real place names only
-- When explaining hotel or transport bookings, always explicitly tell the user what amenities or complimentary items they will get (such as complimentary meals, welcome drinks, WiFi, baggage, charging ports, blankets) and detail the intermediate stops of the transport (where it will stop and for how much time).
-- Booking Flow: Do NOT automatically generate a booking trigger unless you have collected all required booking details from the user:
-  - For Hotels: Check-in date, Check-out date, number of rooms, and number of guests.
-  - For Cabs/Buses/Trains/Flights: Date of travel, passenger name, origin, destination, and the specific vehicle/operator/class chosen.
-  - First, ask the user to clarify any missing details or select from available options.
-  - Only when the user has provided all details and explicitly confirmed/approved the booking, you MUST generate the booking trigger inline in your response. The trigger format is exactly: [BOOKING_TRIGGER: {"type": "<hotel|bus|train|flight|cab>", "city": "<city name for hotel>", "name": "<hotel name or transit operator/train name/airline>", "origin": "<origin city>", "destination": "<destination city>", "date": "<travel date or check_in date in YYYY-MM-DD>", "check_out": "<check_out date in YYYY-MM-DD for hotel>", "rooms": <number of rooms>, "guests": <number of guests>, "seats": "<number of seats/seat number>"}] and write a friendly confirmation. Make sure the JSON inside the trigger is valid and complete.
-- Real-Time Map & Navigation Context: If a user message contains a '[SYSTEM MAP CONTEXT: ...]' prefix, this is their live navigation status (e.g. travel mode, route options, origin, destination, stops, route summary, active step, speed, and road closure warnings). You MUST check this context to answer queries about where they are going, their path, highway numbers, remaining time/distance, nearby places, and road closures. Give them up-to-date, context-aware assistance!
-- If the user's message is not relevant to trips, travel, highways, routing, vehicles, dhabas, hotels, or RoadBuddy, you MUST answer EXACTLY: "I am RoadBuddy AI, your road trip assistant. Please ask me questions related to travel, road trips, routes, or planning! 🚗" and nothing else."""
+- CONFIDENTIALITY & SYSTEM PRIVACY: You must NEVER disclose, discuss, or speculate about internal source code, technology stack, AI models (LLMs, Gemini, Groq, Llama, Machine Learning, NLP), database schemas, backend implementation, developer details, or API keys under ANY circumstances. If a user asks about what AI model you use, how you were built, source code, or system architecture, ALWAYS respond: "I am RoadBuddy AI, your road trip assistant! I am here to help you plan trips, navigate highways, find dhabas, and manage your travel bookings. 🚗" and do NOT reveal any internal technology details.
+- NO REPETITIVE GREETINGS: DO NOT greet the user by name (e.g. "Hey Kunal", "Hello Kunal", "Hi Kunal") on question or informational turns. Only greet when the user explicitly sends a initial greeting ('hi', 'hello', 'hey'). Answer questions directly without preamble or repeated greetings.
+- Speak in natural, friendly, human conversational sentences with markdown formatting (bullet points, bold text, emojis).
+- NEVER output raw JSON objects, key-value braces {}, or code blocks to the user unless generating an inline [BOOKING_TRIGGER: ...].
+- Keep answers informative, concise, and structured under 300 words.
+- Always answer in the context of Indian road travel.
+- When explaining hotel or transport bookings, explicitly tell the user what amenities or complimentary items they get and intermediate stops.
+- Booking Flow: Do NOT generate a booking trigger until all details are collected. The trigger format is inline: [BOOKING_TRIGGER: {"type": "<hotel|bus|train|flight|cab>", "city": "<city name for hotel>", "name": "<hotel name or transit operator/train name/airline>", "origin": "<origin city>", "destination": "<destination city>", "date": "<travel date or check_in date in YYYY-MM-DD>", "check_out": "<check_out date in YYYY-MM-DD for hotel>", "rooms": <number of rooms>, "guests": <number of guests>, "seats": "<number of seats/seat number>"}].
+- Real-Time Map & Navigation Context: If a user message contains '[SYSTEM MAP CONTEXT: ...]', use it to provide context-aware route, speed, navigation, and highway guidance."""
 
 DEFAULT_REJECTION_MESSAGE = "I am RoadBuddy AI, your road trip assistant. Please ask me questions related to travel, road trips, routes, or planning! 🚗"
 
@@ -44,10 +42,20 @@ def is_relevant_query(message: str) -> bool:
         return True
     
     allowed_greetings = {"hi", "hello", "hey", "hola", "namaste", "thanks", "thank you", "help", "who are you", "what is your name", "what can you do", "who am i", "my name"}
-    if message_lower in allowed_greetings or any(g in message_lower for g in ["how are you", "who are you", "what can you", "what is your name", "who am i", "my name", "my booking", "my ticket", "my stay", "my profile", "my trip", "current trip", "active trip"]):
+    if message_lower in allowed_greetings or any(g in message_lower for g in ["how are you", "who are you", "what can you", "what is your name", "who am i", "my name", "my booking", "my ticket", "my stay", "my profile", "my trip", "current trip", "active trip", "where am i going", "where i am going"]):
         return True
         
-    # 3. Travel & RoadBuddy keywords
+    # 3. Explicitly reject off-topic general knowledge, politics & coding queries
+    off_topic_patterns = [
+        r'\bwho\s+is\b', r'\bprime\s+minister\b', r'\bpresident\b', r'\bpolitician\b', r'\bpolitics\b',
+        r'\bmath\b', r'\bscience\b', r'\bphysics\b', r'\bchemistry\b', r'\bhistory\b', r'\bcapital\s+of\b',
+        r'\bwrite\s+code\b', r'\bpython\b', r'\bjavascript\b', r'\bjava\b'
+    ]
+    for pattern in off_topic_patterns:
+        if re.search(pattern, message_lower) and not any(allowed in message_lower for allowed in ["who am i", "who are you"]):
+            return False
+
+    # 4. Travel & RoadBuddy core keywords
     keywords = [
         "trip", "trips", "travel", "road", "route", "routes", "highway", "nh-", "nh ", "hotel", "hotels", "dhaba", "dhabas", "restaurant", "restaurants", "food", 
         "fuel", "toll", "tolls", "cost", "costs", "budget", "price", "prices", "km", "mile", "car", "bike", "vehicle", "vehicles", "cab", "cabs", "bus", "buses", 
@@ -55,11 +63,7 @@ def is_relevant_query(message: str) -> bool:
         "pack", "weather", "booking", "bookings", "tourist", "visit", "attraction", "sightseeing", "driver", "passenger", 
         "seat", "seats", "stay", "room", "city", "state", "india", "ticket", "tickets", "planner", "buddy", "drive", "ride",
         "himalay", "goa", "jaipur", "udaipur", "delhi", "mumbai", "manali", "tour", "place", "location", "distance",
-        "gas", "petrol", "diesel", "ev ", "charging",
-        # conversational follow-up keywords
-        "how", "what", "where", "when", "why", "who", "yes", "no", "ok", "okay", "sure", "yeah", "yep", "fine", "cool",
-        "thanks", "thank", "please", "help", "detail", "details", "info", "show", "list", "plan", "suggest", "recommend",
-        "book", "reserve", "reservation", "reservations"
+        "gas", "petrol", "diesel", "ev ", "charging"
     ]
     return any(kw in message_lower for kw in keywords)
 
@@ -550,17 +554,129 @@ def execute_chatbot_booking(trigger_data: dict, user_id: int, db) -> str:
         return f"⚠️ Error executing booking: {str(e)}"
 
 
+def format_json_response_to_text(response_text: str) -> str:
+    cleaned = response_text.strip()
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or (cleaned.startswith("[") and cleaned.endswith("]")):
+        if "[BOOKING_TRIGGER:" in response_text:
+            return response_text
+            
+        try:
+            import json
+            data = json.loads(cleaned)
+            
+            if isinstance(data, dict):
+                parts = []
+                
+                trip_info = data.get("trip_details") or data
+                if isinstance(trip_info, dict):
+                    orig = trip_info.get("origin") or trip_info.get("from")
+                    dest = trip_info.get("destination") or trip_info.get("to")
+                    if orig and dest:
+                        parts.append(f"📍 **Route**: {orig} → {dest}")
+                    elif "current_trip" in trip_info:
+                        parts.append(f"🗺️ **Current Trip**: {trip_info['current_trip']}")
+                        
+                    dates = trip_info.get("trip_dates") or trip_info.get("dates")
+                    if dates:
+                        if isinstance(dates, list):
+                            parts.append(f"🗓️ **Trip Dates**: {' to '.join(dates)}")
+                        else:
+                            parts.append(f"🗓️ **Trip Dates**: {dates}")
+                            
+                    mode = trip_info.get("travel_mode") or trip_info.get("mode")
+                    if mode:
+                        parts.append(f"🚗 **Travel Mode**: {str(mode).replace('_', ' ').title()}")
+                        
+                    vehicle = trip_info.get("vehicle")
+                    if vehicle:
+                        parts.append(f"🚘 **Vehicle**: {vehicle}")
+                        
+                    cost = trip_info.get("total_cost") or trip_info.get("total_estimated_cost") or trip_info.get("budget")
+                    if cost:
+                        parts.append(f"💰 **Estimated Budget / Cost**: ₹{cost}")
+
+                highways = data.get("route_highways") or data.get("highways")
+                if highways and isinstance(highways, list):
+                    h_list = []
+                    for h in highways:
+                        if isinstance(h, dict):
+                            h_name = h.get("highway") or h.get("name") or "Highway"
+                            h_dir = h.get("direction") or ""
+                            h_list.append(f"{h_name} ({h_dir})" if h_dir else h_name)
+                        elif isinstance(h, str):
+                            h_list.append(h)
+                    if h_list:
+                        parts.append(f"🛣️ **Highways**: {', '.join(h_list)}")
+
+                curr_loc = data.get("current_location")
+                if curr_loc and curr_loc != "null" and curr_loc is not None:
+                    parts.append(f"📍 **Current Location**: {curr_loc}")
+
+                next_dest = data.get("next_destination")
+                if next_dest and next_dest != "null" and next_dest is not None:
+                    parts.append(f"🎯 **Next Destination**: {next_dest}")
+
+                if parts:
+                    return "Here are your active trip details:\n\n" + "\n".join(parts)
+                
+                lines = []
+                def parse_obj(obj, indent=0):
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if v is None or v == "null":
+                                continue
+                            label = k.replace("_", " ").title()
+                            if isinstance(v, (dict, list)):
+                                lines.append(f"{'  '*indent}• **{label}**:")
+                                parse_obj(v, indent + 1)
+                            else:
+                                lines.append(f"{'  '*indent}• **{label}**: {v}")
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            if isinstance(item, (dict, list)):
+                                parse_obj(item, indent)
+                            else:
+                                lines.append(f"{'  '*indent}- {item}")
+
+                parse_obj(data)
+                if lines:
+                    return "\n".join(lines)
+        except Exception as e:
+            print(f"JSON format fallback error: {e}")
+            pass
+    return response_text
+
+
+def strip_unnecessary_greetings(text: str, is_pure_greeting: bool = False) -> str:
+    if is_pure_greeting:
+        return text
+    import re
+    cleaned = re.sub(r'(?:Hey|Hello|Hi)\s+[A-Za-z0-9_\-\.]+(?:,|\!|\.)?\s*', '', text, flags=re.IGNORECASE).strip()
+    if cleaned and cleaned[0].islower():
+        return cleaned[0].upper() + cleaned[1:]
+    return cleaned or text
+
+
 async def chat_with_roadbuddy(message: str, history: list[dict] = None, user_context: str = None, db = None, user_id: int = None) -> dict:
     try:
         raw_history = history or []
-        # Filter to reject any role other than user/assistant (prevents system prompt injection)
         filtered_history = [h for h in raw_history if h.get("role") in ("user", "assistant")]
-        # Apply sliding window of last 10 messages (5 turns)
         truncated_history = filtered_history[-10:]
         
-        # Check if the message is ONLY a standalone greeting or thanks (without additional question words)
         msg_clean = message.lower().strip()
         import re
+
+        # Confidentiality Guard Clause: Protect source code & internal tech stack details
+        code_tech_keywords = [
+            "what ai", "which ai", "ai model", "ai tech", "ai technology", "ai ur using", "ai you using", 
+            "project code", "source code", "codebase", "tell me code", "code of this", "code of project", "cod3",
+            "tech stack", "technology stack", "llm", "backend", "groq", "gemini", "llama", "system prompt", "architecture"
+        ]
+        if any(kw in msg_clean for kw in code_tech_keywords):
+            response_text = "I am RoadBuddy AI, your road trip assistant! I am here to help you plan trips, navigate highways, find dhabas, and manage your travel bookings. 🚗"
+            updated_history = truncated_history + [{"role": "user", "content": message}, {"role": "assistant", "content": response_text}]
+            return {"response": response_text, "history": updated_history, "total_messages": len(updated_history)}
+
         is_pure_greeting = bool(re.match(r'^(hi+|hello+|hey+|namaste|hola|greetings|good\s+morning|good\s+afternoon|good\s+evening|yo|sup|howdy)[!\.\?\s]*$', msg_clean))
         is_pure_thanks = bool(re.match(r'^(thank+|thanks|thank\s+you)[!\.\?\s]*$', msg_clean))
         
@@ -577,7 +693,7 @@ async def chat_with_roadbuddy(message: str, history: list[dict] = None, user_con
                         active_info = line.strip()
 
             if active_info:
-                response_text = f"👋 Hello {user_name}! I am RoadBuddy AI, your friendly road trip assistant. I see your active details on record. How can I help you plan your journey, check bookings, or find best routes today? 🚗"
+                response_text = f"👋 Hello {user_name}! I am RoadBuddy AI, your friendly road trip assistant. How can I help you plan your journey, check bookings, or find best routes today? 🚗"
             else:
                 response_text = f"👋 Hello {user_name}! I am RoadBuddy AI, your friendly road trip assistant. How can I help you plan your journey, check bookings, or find best routes today? 🚗"
 
@@ -589,8 +705,6 @@ async def chat_with_roadbuddy(message: str, history: list[dict] = None, user_con
             updated_history = truncated_history + [{"role": "user", "content": message}, {"role": "assistant", "content": response_text}]
             return {"response": response_text, "history": updated_history, "total_messages": len(updated_history)}
 
-        # Check for DB ID lookup first to ensure absolute details accuracy
-        # Only trigger if the message specifically contains lookup keywords or starts with #/ID prefix
         has_lookup_keyword = any(kw in msg_clean for kw in ["booking", "id", "ref", "reference", "ticket", "details", "lookup", "track", "show", "view"]) or msg_clean.startswith("#")
         if db and has_lookup_keyword:
             is_explicit_id = re.search(r'\b(?:booking|id|ref|reference|ticket|#)\s*\d+\b', msg_clean) or re.match(r'^#?\d+$', msg_clean)
@@ -602,8 +716,7 @@ async def chat_with_roadbuddy(message: str, history: list[dict] = None, user_con
                         updated_history = truncated_history + [{"role": "user", "content": message}, {"role": "assistant", "content": details}]
                         return {"response": details, "history": updated_history, "total_messages": len(updated_history)}
 
-        # Guard clause for irrelevant queries - skipped if there's history to allow follow-ups
-        if not truncated_history and not is_relevant_query(message):
+        if not is_relevant_query(message):
             response_text = DEFAULT_REJECTION_MESSAGE
             updated_history = truncated_history + [{"role": "user", "content": message}, {"role": "assistant", "content": response_text}]
             return {"response": response_text, "history": updated_history, "total_messages": len(updated_history)}
@@ -619,6 +732,11 @@ async def chat_with_roadbuddy(message: str, history: list[dict] = None, user_con
                 response_text = mock_chat_response(message, user_context)
         else:
             response_text = mock_chat_response(message, user_context)
+
+        # Sanitize any raw JSON blocks returned by LLMs into natural text
+        response_text = format_json_response_to_text(response_text)
+        # Strip repetitive name greetings on non-greeting question turns
+        response_text = strip_unnecessary_greetings(response_text, is_pure_greeting)
 
         # Intercept booking trigger in response_text
         if "[BOOKING_TRIGGER:" in response_text:
