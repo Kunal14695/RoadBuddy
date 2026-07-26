@@ -774,7 +774,11 @@ def end_trip(
     trip.transport_fare_inr = total_transit_cost + total_cab_cost
     trip.food_cost_inr = total_food_cost
     
-    trip.total_cost_inr = trip.fuel_cost_inr + trip.toll_cost_inr + trip.hotel_cost_inr + trip.transport_fare_inr + trip.food_cost_inr
+    trip.total_cost_inr = (trip.fuel_cost_inr or 0.0) + (trip.toll_cost_inr or 0.0) + trip.hotel_cost_inr + trip.transport_fare_inr + trip.food_cost_inr
+
+    # Save total expenses to journal record
+    if journal:
+        journal.total_expense_inr = trip.total_cost_inr
 
     db.commit()
 
